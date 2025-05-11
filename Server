@@ -3,25 +3,27 @@ import java.net.*;         // network library
 
 public class Server {
     public static void main(String[] args) throws IOException {
-        try{
-            ServerSocket serverSocket = new ServerSocket(1234);   
-            System.out.println("Server is listening on port 1234...");
+        try {
+            ServerSocket serverSocket = new ServerSocket(1234, 50, InetAddress.getByName("192.168.195.129"));  //Creates a server socket bound to IP 192.168.195.129 and port 1234
+                                                              // 50 is backlog (the maximum number d pending connection requests that the OS can hold in a queue for the server socket)
+            System.out.println("Server is listening...");     // this message printing while the server wait the client to accept connectino
 
-            Socket socket = serverSocket.accept();
-            System.out.println("Client connected!");
+            Socket socket = serverSocket.accept();            // Waits until a client connect, then returns a socket for communication
 
-            BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            PrintWriter output = new PrintWriter(socket.getOutputStream(), true);
+            System.out.println("Client connected!");          // prints it when client is really connected.
 
-            String message = input.readLine();
-            System.out.println("Received from client: " + message);
+            BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream()));  // Sets up a reader to receive messages from the client
+            PrintWriter output = new PrintWriter(socket.getOutputStream(), true);                       // Sets up a writer to send responses back to the client
 
-            output.println("Echo: " + message.toUpperCase());
+            String message = input.readLine();                           // Reads the message sent by the client
+            System.out.println("Received from client: " + message);      // Prints the received message to the server’s console
 
-            socket.close();
-            serverSocket.close();
-        } catch (Exception e) {
-            System.err.println(e.getMessage());
+            output.println("Echo: " + message.toUpperCase());            // Sends back an uppercase version of the client's message, prefixed with "Echo:"
+
+            socket.close();                                              // Closes the client socket
+            serverSocket.close();                                        // Closes the server socket, and ending the program
+        } catch(Exception e) {
+            System.err.println("Server failed: " + e.getMessage());
         }
     }
 }

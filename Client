@@ -8,7 +8,7 @@ public class Client {
         PrintWriter out = new PrintWriter(socket.getOutputStream(), true);                      //Sets up a writer to send data to the server
         BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream())); // Sets up a reader to receive data from the serve
 
-        System.out.println("Hello from VM client!");                                            //Sends a message to the server
+        out.println("Hello from VM client!");                                                   //Sends a message to the server
         String response = in.readLine();                                                        // Waits to receive a line of text (response) from the server
         System.out.println("Server Response: " + response);                                     // Displays the server’s response
 

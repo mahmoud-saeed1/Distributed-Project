@@ -1,17 +1,271 @@
-import java.io.*;        // input/output library
-import java.net.*;       // network library
+import java.io.*;          // Input/output library
+import java.net.*;         // Network library
+import java.util.Scanner;  // Scanner for user input
 
+/**
+ * Enhanced TCP Client with calculator and remote command execution capabilities
+ * This client connects to the server and allows users to send mathematical expressions
+ * and system commands for processing on the server.
+ *
+ * Client IP: 192.168.48.130
+ * Server IP: 192.168.48.128
+ * Port: 1234
+ */
 public class Client {
-    public static void main(String[] args) throws IOException {
-        Socket socket = new Socket("192.168.195.129", 1234);                                   // Connects to a server running at IP 192.168.195.129 and port 1234
-
-        PrintWriter out = new PrintWriter(socket.getOutputStream(), true);                      //Sets up a writer to send data to the server
-        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream())); // Sets up a reader to receive data from the serve
-
-        out.println("Hello from VM client!");                                                   //Sends a message to the server
-        String response = in.readLine();                                                        // Waits to receive a line of text (response) from the server
-        System.out.println("Server Response: " + response);                                     // Displays the server’s response
-
-        socket.close();                                                                         // Closes the socket connection
+    // Constants for console UI
+    private static final String BORDER = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    private static final String HEADER = "┏" + BORDER + "┓";
+    private static final String FOOTER = "┗" + BORDER + "┛";
+    private static final String SECTION = "┣" + BORDER + "┫";
+    
+    // Server details
+    private static final String SERVER_IP = "192.168.48.128"; // Server IP address
+    private static final int SERVER_PORT = 1234;              // Server port number
+    
+    /**
+     * Main method - entry point of the client application
+     * @param args Command line arguments (not used)
+     */
+    public static void main(String[] args) {
+        printBanner(); // Print welcome banner
+        
+        try (
+            // Create connection to server
+            Socket socket = new Socket(SERVER_IP, SERVER_PORT);
+            
+            // Setup I/O streams for server communication
+            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            
+            // Setup scanner for user input
+            Scanner scanner = new Scanner(System.in)
+        ) {
+            printSuccess("Connected to server at " + SERVER_IP + ":" + SERVER_PORT);
+            
+            // Main interaction loop
+            boolean running = true;
+            while (running) {
+                // Display menu
+                printMenu();
+                System.out.print("Enter your choice: ");
+                String choice = scanner.nextLine().trim();
+                
+                switch (choice) {
+                    case "1": // Calculator mode
+                        handleCalculatorMode(scanner, out, in);
+                        break;
+                        
+                    case "2": // Command execution mode
+                        handleCommandMode(scanner, out, in);
+                        break;
+                        
+                    case "3": // Exit
+                        printInfo("Disconnecting from server...");
+                        out.println("exit");
+                        running = false;
+                        break;
+                        
+                    default:
+                        printError("Invalid choice. Please enter 1, 2, or 3.");
+                        break;
+                }
+            }
+            
+        } catch (ConnectException e) {
+            printError("Failed to connect to server: Connection refused");
+            printInfo("Make sure the server is running at " + SERVER_IP + ":" + SERVER_PORT);
+        } catch (UnknownHostException e) {
+            printError("Server host not found: " + SERVER_IP);
+            printInfo("Check the server IP address and network connection");
+        } catch (IOException e) {
+            printError("Connection error: " + e.getMessage());
+        }
+        
+        printInfo("Client application terminated");
+    }
+    
+    /**
+     * Handles calculator mode interaction
+     * @param scanner Scanner for user input
+     * @param out PrintWriter for server communication
+     * @param in BufferedReader for server responses
+     * @throws IOException If an I/O error occurs
+     */
+    private static void handleCalculatorMode(Scanner scanner, PrintWriter out, BufferedReader in) throws IOException {
+        printSubheader("Distributed Calculator Mode");
+        printInfo("Enter mathematical expressions to evaluate");
+        printInfo("Examples: '(12 + 8) * 3 - 4 / 2' or '10 + 5 * 3'");
+        printInfo("Type 'back' to return to the main menu");
+        
+        while (true) {
+            // Get expression from user
+            System.out.print("\nEnter expression: ");
+            String expression = scanner.nextLine().trim();
+            
+            // Check if user wants to go back
+            if (expression.equalsIgnoreCase("back")) {
+                break;
+            }
+            
+            // Send expression to server
+            out.println("CALC:" + expression);
+            printInfo("Sending to server: " + expression);
+            
+            // Receive and display result
+            String response = in.readLine();
+            if (response.startsWith("RESULT:")) {
+                String result = response.substring(7);
+                printSuccess("Result: " + result);
+            } else if (response.startsWith("ERROR:")) {
+                String error = response.substring(6);
+                printError("Error: " + error);
+            } else {
+                printWarning("Unexpected server response: " + response);
+            }
+        }
+    }
+    
+    /**
+     * Handles command mode interaction
+     * @param scanner Scanner for user input
+     * @param out PrintWriter for server communication
+     * @param in BufferedReader for server responses
+     * @throws IOException If an I/O error occurs
+     */
+    private static void handleCommandMode(Scanner scanner, PrintWriter out, BufferedReader in) throws IOException {
+        printSubheader("Remote Command Execution Mode");
+        printInfo("Enter commands to execute on the server");
+        printInfo("Examples: 'ls -la', 'dir', 'ping localhost'");
+        printInfo("Type 'back' to return to the main menu");
+        
+        while (true) {
+            // Get command from user
+            System.out.print("\nEnter command: ");
+            String command = scanner.nextLine().trim();
+            
+            // Check if user wants to go back
+            if (command.equalsIgnoreCase("back")) {
+                break;
+            }
+            
+            // Send command to server
+            out.println("CMD:" + command);
+            printInfo("Sending command to server: " + command);
+            
+            // Receive and display result
+            printInfo("Waiting for command execution...");
+            String response = in.readLine();
+            
+            if (response.startsWith("CMD_RESULT:")) {
+                String result = response.substring(11);
+                printSubheader("Command Output");
+                
+                // Print output with line breaks
+                if (result.trim().isEmpty()) {
+                    System.out.println("┃ [No output returned]");
+                } else {
+                    // Split the result into lines and print each line
+                    String[] lines = result.split("\n");
+                    for (String line : lines) {
+                        System.out.println("┃ " + line);
+                    }
+                }
+            } else {
+                printWarning("Unexpected server response: " + response);
+            }
+        }
+    }
+    
+    /**
+     * Prints the client welcome banner
+     */
+    private static void printBanner() {
+        System.out.println(HEADER);
+        System.out.println("┃                         DISTRIBUTED CLIENT v1.0                              ┃");
+        System.out.println("┃          Client IP: 192.168.48.130 • Server IP: 192.168.48.128              ┃");
+        System.out.println(SECTION);
+        System.out.println("┃  Features:                                                                  ┃");
+        System.out.println("┃  • Distributed Calculator - Process mathematical expressions                ┃");
+        System.out.println("┃  • Remote Command Execution - Run system commands                           ┃");
+        System.out.println(FOOTER);
+    }
+    
+    /**
+     * Prints the main menu
+     */
+    private static void printMenu() {
+        System.out.println("\n┏━━━━━ MAIN MENU " + "━".repeat(67));
+        System.out.println("┃");
+        System.out.println("┃  1. Distributed Calculator");
+        System.out.println("┃  2. Remote Command Execution");
+        System.out.println("┃  3. Exit");
+        System.out.println("┃");
+        System.out.println("┗" + "━".repeat(77));
+    }
+    
+    /**
+     * Prints a section subheader
+     * @param title The subheader title
+     */
+    private static void printSubheader(String title) {
+        System.out.println("\n┏━━━━━ " + title + " " + "━".repeat(69 - title.length()));
+    }
+    
+    /**
+     * Prints an informational message
+     * @param message The message to print
+     */
+    private static void printInfo(String message) {
+        System.out.println("┃ ℹ️  " + message);
+    }
+    
+    /**
+     * Prints a success message
+     * @param message The message to print
+     */
+    private static void printSuccess(String message) {
+        System.out.println("┃ ✅ " + message);
+    }
+    
+    /**
+     * Prints a warning message
+     * @param message The message to print
+     */
+    private static void printWarning(String message) {
+        System.out.println("┃ ⚠️  " + message);
+    }
+    
+    /**
+     * Prints an error message
+     * @param message The message to print
+     */
+    private static void printError(String message) {
+        System.out.println("┃ ❌ " + message);
     }
 }
+
+/*
+HOW TO RUN THE CLIENT ON VMWARE WORKSTATION
+------------------------------------------
+1. Make sure your VM has IP address 192.168.48.130
+   - Check with: ipconfig (Windows) or ifconfig (Linux)
+   - If different, modify the IP in the code or configure your VM to use this IP
+
+2. Make sure the server is running on the server VM (192.168.48.128)
+
+3. Compile the client:
+   javac Client.java
+
+4. Run the client:
+   java Client
+
+5. Follow the on-screen menu to interact with the server
+   - Option 1: Use the distributed calculator
+   - Option 2: Execute remote commands on the server
+   - Option 3: Exit the application
+
+6. If you get connection errors:
+   - Verify both VMs are running and can ping each other
+   - Check firewall settings on both VMs
+   - Ensure the server is running and listening on port 1234
+*/

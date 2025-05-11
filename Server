@@ -1,29 +1,525 @@
-import java.io.*;          // invoke input/output library
-import java.net.*;         // network library 
+import java.io.*;          // Input/output library
+import java.net.*;       // Network library
+import java.util.*;      // Utilities library
+import java.util.concurrent.*; // Concurrency library
+import java.util.regex.*; // Regular expressions for parsing
 
+/**
+ * Enhanced TCP Server with distributed calculator and remote command execution capabilities
+ * This server accepts connections from clients and processes mathematical expressions
+ * and system commands in separate threads.
+ * 
+ * Server IP: 192.168.48.128
+ * Port: 1234
+ */
 public class Server {
-    public static void main(String[] args) throws IOException {
+    // Constants for console UI
+    private static final String BORDER = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    private static final String HEADER = "┏" + BORDER + "┓";
+    private static final String FOOTER = "┗" + BORDER + "┛";
+    private static final String SECTION = "┣" + BORDER + "┫";
+    
+    // Thread pool for handling client requests
+    private static final ExecutorService threadPool = Executors.newFixedThreadPool(5); // Create thread pool with 5 threads
+    
+    /**
+     * Main method - entry point of the server application
+     * @param args Command line arguments (not used)
+     */
+    public static void main(String[] args) {
+        printBanner(); // Print welcome banner
+        
+        ServerSocket serverSocket = null;
         try {
-            ServerSocket serverSocket = new ServerSocket(1234, 50, InetAddress.getByName("192.168.195.129"));  //Creates a server socket bound to IP 192.168.195.129 and port 1234
-                                                              // 50 is backlog (the maximum number d pending connection requests that the OS can hold in a queue for the server socket)
-            System.out.println("Server is listening...");     // this message printing while the server wait the client to accept connectino
-
-            Socket socket = serverSocket.accept();            // Waits until a client connect, then returns a socket for communication
-
-            System.out.println("Client connected!");          // prints it when client is really connected.
-
-            BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream()));  // Sets up a reader to receive messages from the client
-            PrintWriter output = new PrintWriter(socket.getOutputStream(), true);                       // Sets up a writer to send responses back to the client
-
-            String message = input.readLine();                           // Reads the message sent by the client
-            System.out.println("Received from client: " + message);      // Prints the received message to the server’s console
-
-            output.println("Echo: " + message.toUpperCase());            // Sends back an uppercase version of the client's message, prefixed with "Echo:"
-
-            socket.close();                                              // Closes the client socket
-            serverSocket.close();                                        // Closes the server socket, and ending the program
-        } catch(Exception e) {
-            System.err.println("Server failed: " + e.getMessage());
+            // Create server socket bound to the specified IP and port
+            serverSocket = new ServerSocket(1234, 50, InetAddress.getByName("192.168.48.128"));
+            printInfo("Server started successfully on 192.168.48.128:1234");
+            printInfo("Waiting for client connections...");
+            
+            // Server runs indefinitely, accepting multiple client connections
+            while (true) {
+                try {
+                    // Accept client connection
+                    Socket clientSocket = serverSocket.accept();
+                    String clientAddress = clientSocket.getInetAddress().getHostAddress();
+                    printSuccess("New client connected: " + clientAddress);
+                    
+                    // Handle client in a separate thread
+                    threadPool.submit(() -> handleClient(clientSocket));
+                } catch (IOException e) {
+                    printError("Error accepting client connection: " + e.getMessage());
+                }
+            }
+        } catch (BindException e) {
+            // Handle specific binding error
+            printError("Failed to bind to address - Address already in use");
+            printInfo("Please make sure no other process is using port 1234");
+            printInfo("Try: netstat -ano | findstr :1234   (Windows)");
+            printInfo("Or:  lsof -i :1234                  (Linux/Mac)");
+        } catch (IOException e) {
+            // Handle generic IO errors
+            printError("Server initialization error: " + e.getMessage());
+        } finally {
+            // Cleanup resources
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                try {
+                    serverSocket.close();
+                    printInfo("Server socket closed");
+                } catch (IOException e) {
+                    printError("Error closing server socket: " + e.getMessage());
+                }
+            }
+            threadPool.shutdown(); // Shutdown thread pool
         }
     }
+    
+    /**
+     * Handles communication with a connected client
+     * @param socket The client socket connection
+     */
+    private static void handleClient(Socket socket) {
+        try (
+            // Initialize I/O streams for the client
+            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            PrintWriter out = new PrintWriter(socket.getOutputStream(), true)
+        ) {
+            String clientAddress = socket.getInetAddress().getHostAddress();
+            
+            // Main client interaction loop
+            String input;
+            while ((input = in.readLine()) != null && !input.equalsIgnoreCase("exit")) {
+                printInfo("Received from " + clientAddress + ": " + input);
+                
+                // Process client request based on command type
+                if (input.startsWith("CALC:")) {
+                    // Handle calculator request
+                    String expression = input.substring(5).trim();
+                    handleCalculatorRequest(expression, out);
+                } else if (input.startsWith("CMD:")) {
+                    // Handle command execution request
+                    String command = input.substring(4).trim();
+                    handleCommandRequest(command, out);
+                } else {
+                    // Handle unknown request type
+                    printWarning("Unknown request type from " + clientAddress);
+                    out.println("ERROR: Unknown request type. Use 'CALC:' or 'CMD:' prefix.");
+                }
+            }
+            
+            // Client disconnected
+            printInfo("Client " + clientAddress + " disconnected");
+            
+        } catch (IOException e) {
+            printError("Error handling client: " + e.getMessage());
+        } finally {
+            try {
+                socket.close(); // Close client socket
+            } catch (IOException e) {
+                printError("Error closing client socket: " + e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * Processes a calculator request by splitting the expression into sub-tasks
+     * @param expression The mathematical expression to evaluate
+     * @param out The output stream to send results back to client
+     */
+    private static void handleCalculatorRequest(String expression, PrintWriter out) {
+        printSubheader("Processing Calculator Request");
+        printInfo("Expression: " + expression);
+        
+        try {
+            // Remove all spaces from expression for easier parsing
+            expression = expression.replaceAll("\\s+", "");
+            
+            // List to store sub-expression results
+            List<Future<Double>> results = new ArrayList<>();
+            
+            // Split work based on addition and subtraction operators
+            List<String> terms = splitByOperators(expression, "+-");
+            List<Character> operators = extractOperators(expression, "+-");
+            
+            printInfo("Split into " + terms.size() + " sub-expressions");
+            
+            // Process each term in parallel
+            for (int i = 0; i < terms.size(); i++) {
+                final String term = terms.get(i);
+                printInfo("Sub-task " + (i+1) + ": " + term);
+                
+                // Submit sub-task to thread pool
+                results.add(threadPool.submit(() -> evaluateExpression(term)));
+            }
+            
+            // Combine results
+            double finalResult = results.get(0).get(); // Start with first term
+            for (int i = 0; i < operators.size(); i++) {
+                double nextValue = results.get(i+1).get();
+                if (operators.get(i) == '+') {
+                    finalResult += nextValue;
+                } else {
+                    finalResult -= nextValue;
+                }
+            }
+            
+            // Format result to avoid unnecessary decimal places
+            String formattedResult = finalResult == Math.floor(finalResult) ? 
+                                    String.valueOf((int)finalResult) : 
+                                    String.valueOf(finalResult);
+            
+            printSuccess("Final result: " + formattedResult);
+            out.println("RESULT: " + formattedResult); // Send result to client
+            
+        } catch (Exception e) {
+            printError("Error processing expression: " + e.getMessage());
+            out.println("ERROR: Invalid expression - " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Splits an expression by specified operators, preserving parenthesized expressions
+     * @param expression The expression to split
+     * @param operators String containing operators to split by
+     * @return List of sub-expressions
+     */
+    private static List<String> splitByOperators(String expression, String operators) {
+        List<String> terms = new ArrayList<>();
+        int start = 0;
+        int parenthesesCount = 0;
+        
+        for (int i = 0; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (c == '(') {
+                parenthesesCount++;
+            } else if (c == ')') {
+                parenthesesCount--;
+            } else if (parenthesesCount == 0 && operators.indexOf(c) >= 0) {
+                // Found an operator outside parentheses
+                if (i > start) {
+                    terms.add(expression.substring(start, i));
+                }
+                start = i + 1;
+            }
+        }
+        
+        // Add the last term
+        if (start < expression.length()) {
+            terms.add(expression.substring(start));
+        }
+        
+        return terms;
+    }
+    
+    /**
+     * Extracts operators from an expression
+     * @param expression The expression to extract operators from
+     * @param operators String containing operators to extract
+     * @return List of operators in order of appearance
+     */
+    private static List<Character> extractOperators(String expression, String operators) {
+        List<Character> foundOperators = new ArrayList<>();
+        int parenthesesCount = 0;
+        
+        for (int i = 0; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (c == '(') {
+                parenthesesCount++;
+            } else if (c == ')') {
+                parenthesesCount--;
+            } else if (parenthesesCount == 0 && operators.indexOf(c) >= 0) {
+                foundOperators.add(c);
+            }
+        }
+        
+        return foundOperators;
+    }
+    
+    /**
+     * Evaluates a mathematical expression
+     * @param expression The expression to evaluate
+     * @return The result of the expression
+     * @throws Exception If the expression is invalid
+     */
+    private static double evaluateExpression(String expression) throws Exception {
+        // Display thread information
+        printInfo("Evaluating '" + expression + "' on " + Thread.currentThread().getName());
+        
+        try {
+            // Create a custom expression evaluator instance
+            ExpressionEvaluator evaluator = new ExpressionEvaluator();
+            return evaluator.evaluate(expression);
+        } catch (Exception e) {
+            throw new Exception("Invalid expression: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Custom expression evaluator class - handles basic arithmetic expressions
+     */
+    private static class ExpressionEvaluator {
+        // Tokenize the expression using regex pattern
+        private static final Pattern PATTERN = Pattern.compile("\\s*([\\d.]+|[+\\-*/()]|\\s*)\\s*");
+        
+        /**
+         * Main evaluate method - entry point for expression evaluation
+         * @param expression The expression to evaluate
+         * @return The result of evaluation
+         * @throws Exception If the expression is invalid
+         */
+        public double evaluate(String expression) throws Exception {
+            // Remove all spaces for consistent parsing
+            expression = expression.replaceAll("\\s+", "");
+            
+            // Create queue of tokens from expression
+            Queue<String> tokens = tokenize(expression);
+            
+            // Parse and evaluate the expression
+            double result = parseExpression(tokens);
+            
+            // Check if there are any tokens left (which would be an error)
+            if (!tokens.isEmpty()) {
+                throw new Exception("Unexpected token: " + tokens.peek());
+            }
+            
+            return result;
+        }
+        
+        /**
+         * Tokenize an expression into individual parts
+         * @param expression The expression to tokenize
+         * @return Queue of tokens
+         */
+        private Queue<String> tokenize(String expression) {
+            Queue<String> tokens = new LinkedList<>();
+            Matcher matcher = PATTERN.matcher(expression);
+            
+            while (matcher.find()) {
+                String token = matcher.group(1);
+                if (!token.isEmpty() && !token.isBlank()) {
+                    tokens.add(token);
+                }
+            }
+            
+            return tokens;
+        }
+        
+        /**
+         * Parse and evaluate an expression
+         * @param tokens Queue of tokens to parse
+         * @return Result of expression
+         * @throws Exception If expression is invalid
+         */
+        private double parseExpression(Queue<String> tokens) throws Exception {
+            // Start with first term
+            double left = parseTerm(tokens);
+            
+            // Process any addition or subtraction
+            while (!tokens.isEmpty() && (tokens.peek().equals("+") || tokens.peek().equals("-"))) {
+                String operator = tokens.poll();
+                double right = parseTerm(tokens);
+                
+                if (operator.equals("+")) {
+                    left += right;
+                } else {
+                    left -= right;
+                }
+            }
+            
+            return left;
+        }
+        
+        /**
+         * Parse and evaluate a term (product/quotient)
+         * @param tokens Queue of tokens to parse
+         * @return Result of term
+         * @throws Exception If term is invalid
+         */
+        private double parseTerm(Queue<String> tokens) throws Exception {
+            // Start with first factor
+            double left = parseFactor(tokens);
+            
+            // Process any multiplication or division
+            while (!tokens.isEmpty() && (tokens.peek().equals("*") || tokens.peek().equals("/"))) {
+                String operator = tokens.poll();
+                double right = parseFactor(tokens);
+                
+                if (operator.equals("*")) {
+                    left *= right;
+                } else {
+                    if (right == 0) {
+                        throw new Exception("Division by zero");
+                    }
+                    left /= right;
+                }
+            }
+            
+            return left;
+        }
+        
+        /**
+         * Parse and evaluate a factor (number or parenthesized expression)
+         * @param tokens Queue of tokens to parse
+         * @return Result of factor
+         * @throws Exception If factor is invalid
+         */
+        private double parseFactor(Queue<String> tokens) throws Exception {
+            if (tokens.isEmpty()) {
+                throw new Exception("Unexpected end of expression");
+            }
+            
+            String token = tokens.poll();
+            
+            // Handle parentheses
+            if (token.equals("(")) {
+                double result = parseExpression(tokens);
+                
+                if (tokens.isEmpty() || !tokens.poll().equals(")")) {
+                    throw new Exception("Missing closing parenthesis");
+                }
+                
+                return result;
+            }
+            
+            // Handle numbers
+            try {
+                return Double.parseDouble(token);
+            } catch (NumberFormatException e) {
+                throw new Exception("Invalid number: " + token);
+            }
+        }
+    }
+    
+    /**
+     * Handles command execution requests from clients
+     * @param command The command to execute
+     * @param out The output stream to write results back to the client
+     */
+    private static void handleCommandRequest(String command, PrintWriter out) {
+        printSubheader("Processing Command Request");
+        printInfo("Command: " + command);
+        
+        // Execute command in a separate thread
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                // Create process builder
+                ProcessBuilder processBuilder = new ProcessBuilder();
+                
+                // Set command based on OS
+                if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+                    processBuilder.command("cmd.exe", "/c", command);
+                } else {
+                    processBuilder.command("bash", "-c", command);
+                }
+                
+                // Start process
+                Process process = processBuilder.start();
+                printInfo("Process started on " + Thread.currentThread().getName());
+                
+                // Read process output
+                StringBuilder output = new StringBuilder();
+                BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                BufferedReader stdError = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+                
+                // Collect stdout
+                String s;
+                while ((s = stdInput.readLine()) != null) {
+                    output.append(s).append("\n");
+                }
+                
+                // Collect stderr
+                while ((s = stdError.readLine()) != null) {
+                    output.append("ERROR: ").append(s).append("\n");
+                }
+                
+                // Wait for process to complete
+                int exitCode = process.waitFor();
+                printInfo("Command completed with exit code: " + exitCode);
+                
+                return output.toString();
+            } catch (Exception e) {
+                return "ERROR: " + e.getMessage();
+            }
+        }, threadPool).thenAccept(result -> {
+            // Send result back to client
+            printSuccess("Command execution completed");
+            out.println("CMD_RESULT:" + result);
+        });
+    }
+    
+    /**
+     * Prints the server welcome banner
+     */
+    private static void printBanner() {
+        System.out.println(HEADER);
+        System.out.println("┃                         DISTRIBUTED SERVER v1.0                              ┃");
+        System.out.println("┃                  IP: 192.168.48.128 • PORT: 1234                            ┃");
+        System.out.println(SECTION);
+        System.out.println("┃  Features:                                                                  ┃");
+        System.out.println("┃  • Distributed Calculator - Process mathematical expressions                ┃");
+        System.out.println("┃  • Remote Command Execution - Run system commands                           ┃");
+        System.out.println(FOOTER);
+    }
+    
+    /**
+     * Prints a section subheader
+     * @param title The subheader title
+     */
+    private static void printSubheader(String title) {
+        System.out.println("\n┏━━━━━ " + title + " " + "━".repeat(69 - title.length()));
+    }
+    
+    /**
+     * Prints an informational message
+     * @param message The message to print
+     */
+    private static void printInfo(String message) {
+        System.out.println("┃ ℹ️  " + message);
+    }
+    
+    /**
+     * Prints a success message
+     * @param message The message to print
+     */
+    private static void printSuccess(String message) {
+        System.out.println("┃ ✅ " + message);
+    }
+    
+    /**
+     * Prints a warning message
+     * @param message The message to print
+     */
+    private static void printWarning(String message) {
+        System.out.println("┃ ⚠️  " + message);
+    }
+    
+    /**
+     * Prints an error message
+     * @param message The message to print
+     */
+    private static void printError(String message) {
+        System.out.println("┃ ❌ " + message);
+    }
 }
+
+/*
+HOW TO RUN THE SERVER ON VMWARE WORKSTATION
+------------------------------------------
+1. Make sure your VM has IP address 192.168.48.128
+   - Check with: ipconfig (Windows) or ifconfig (Linux)
+   - If different, modify the IP in the code or configure your VM to use this IP
+
+2. Compile the server:
+   javac Server.java
+
+3. Run the server:
+   java Server
+
+4. The server will start and listen for connections on port 1234
+   - Look for the "Server started successfully" message
+
+5. If you get a "Address already in use" error:
+   - Find and terminate the process using port 1234
+   - On Windows: netstat -ano | findstr :1234
+   - On Linux: lsof -i :1234
+   - Then try running the server again
+*/

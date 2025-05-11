@@ -1,0 +1,17 @@
+import java.io.*;        // input/output library
+import java.net.*;       // network library
+
+public class Client {
+    public static void main(String[] args) throws IOException {
+        Socket socket = new Socket("192.168.195.129", 1234);                                   // Connects to a server running at IP 192.168.195.129 and port 1234
+
+        PrintWriter out = new PrintWriter(socket.getOutputStream(), true);                      //Sets up a writer to send data to the server
+        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream())); // Sets up a reader to receive data from the serve
+
+        System.out.println("Hello from VM client!");                                            //Sends a message to the server
+        String response = in.readLine();                                                        // Waits to receive a line of text (response) from the server
+        System.out.println("Server Response: " + response);                                     // Displays the server’s response
+
+        socket.close();                                                                         // Closes the socket connection
+    }
+}
